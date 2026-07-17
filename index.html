@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QuantumPrice | High-Frequency Terminal</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+        body {
+            background-color: #0d1117;
+            color: #c9d1d9;
+            font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+        }
+
+        .flash-green {
+            animation: flashG 0.8s ease-out;
+        }
+
+        .flash-red {
+            animation: flashR 0.8s ease-out;
+        }
+
+        @keyframes flashG {
+            0% {
+                background-color: rgba(35, 134, 54, 0.6);
+            }
+
+            100% {
+                background-color: transparent;
+            }
+        }
+
+        @keyframes flashR {
+            0% {
+                background-color: rgba(218, 54, 51, 0.4);
+            }
+
+            100% {
+                background-color: transparent;
+            }
+        }
+
+        .table-row {
+            transition: background-color 0.2s;
+        }
+
+        .table-row:hover {
+            background-color: #161b22;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // Custom Tooltip Component for Table Headers
+        function InfoTooltip({ text }) {
+            return (
+                <div className="group relative inline-flex items-center ml-2 cursor-help align-middle mb-0.5">
+                    {/* Added 'lowercase' to override the table header's uppercase rule */}
+                    <span className="lowercase inline-flex items-center justify-center w-[15px] h-[15px] text-[11px] font-sans font-bold leading-none text-gray-500 border border-gray-600 rounded-full group-hover:bg-gray-600 group-hover:text-white transition-all">
+                        i
+                    </span>
+                    {/* Added 'whitespace-normal' to prevent the text from stretching out of the box */}
+                    <div className="whitespace-normal opacity-0 w-64 bg-[#161b22] text-gray-300 text-xs font-sans font-normal normal-case rounded-md py-2.5 px-3.5 absolute z-10 bottom-full left-1/2 -translate-x-1/2 mb-2.5 pointer-events-none group-hover:opacity-100 transition-opacity duration-200 shadow-xl border border-gray-700 tracking-wide">
+                        {text}
+                        <svg className="absolute text-[#161b22] h-2 w-full left-0 top-full" x="0px" y="0px" viewBox="0 0 255 255" xmlSpace="preserve">
+                            <polygon className="fill-current" points="0,0 127.5,127.5 255,0" />
+                            <polyline className="stroke-gray-700 fill-none" strokeWidth="20" points="0,0 127.5,127.5 255,0" />
+                        </svg>
+                    </div>
+                </div>
+            );
+        }
+
+        function QuantumDashboard() {
+            const [catalog, setCatalog] = useState({});
+            const [status, setStatus] = useState("DISCONNECTED");
+            const [eventCount, setEventCount] = useState(0);
+            const [isEngineRunning, setIsEngineRunning] = useState(false);
+
+            useEffect(() => {
+                // Initial Fetch of the Redis Database
+                fetch("http://127.0.0.1:8000/catalog")
+                    .then(res => res.json())
+                    .then(data => {
+                        if (data.message) return;
+                        const formattedData = {};
+                        for (const [sku, val] of Object.entries(data)) {
+                            const parts = val.split(",");
+                            if (parts.length >= 5) {
+                                formattedData[sku] = {
+                                    price: parts[1], oldPrice: parts[2], compPrice: parts[3], cost: parts[4], timestamp: Date.now()
+                                };
+                            }
+                        }
+                        setCatalog(formattedData);
+                    }).catch(err => console.error(err));
+
+                // Open the high-speed WebSocket pipe
+                const ws = new WebSocket("ws://127.0.0.1:8000/ws/stream");
+                ws.onopen = () => setStatus("CONNECTED - LIVE");
+
+                ws.onmessage = (event) => {
+                    const parts = event.data.split(",");
+                    if (parts.length >= 5) {
+                        const [sku, price, oldPrice, compPrice, cost] = parts;
+                        setEventCount(prev => prev + 1);
+                        setCatalog(prev => ({
+                            ...prev,
+                            [sku]: { price, oldPrice, compPrice, cost, timestamp: Date.now() }
+                        }));
+                    }
+                };
+                ws.onclose = () => setStatus("DISCONNECTED");
+                return () => ws.close();
+            }, []);
+
+            const triggerEngineStart = async () => {
+                setIsEngineRunning(true);
+                try {
+                    await fetch("http://127.0.0.1:8000/engine/start", { method: "POST" });
+                } catch (e) {
+                    console.error("Failed to start engine:", e);
+                    setIsEngineRunning(false);
+                }
+            };
+
+            const triggerEngineStop = async () => {
+                setIsEngineRunning(false);
+                try {
+                    await fetch("http://127.0.0.1:8000/engine/stop", { method: "POST" });
+                } catch (e) {
+                    console.error("Failed to stop engine:", e);
+                }
+            };
+
+            return (
+                <div className="p-8 max-w-[95rem] mx-auto">
+                    <div className="mb-8 border-b border-gray-700 pb-5">
+
+                        {/* Top Row: Title on Left, Controls on Right */}
+                        <div className="flex justify-between items-center mb-4">
+                            <div>
+                                <h1 className="text-3xl font-bold text-white tracking-wider">QUANTUM<span className="text-blue-500">PRICE</span></h1>
+                                <p className="text-blue-400 text-sm mt-1 font-semibold tracking-wide">High-Frequency Algorithmic Pricing & Arbitrage Engine</p>
+                            </div>
+
+                            <div className="flex items-center gap-8">
+                                {/* ENGINE CONTROLS */}
+                                <div className="flex bg-[#161b22] p-2 rounded-lg border border-gray-700 shadow-inner">
+                                    <button
+                                        onClick={triggerEngineStart}
+                                        disabled={isEngineRunning}
+                                        className={`px-4 py-2 rounded font-bold text-sm transition-all ${isEngineRunning ? 'bg-gray-800 text-gray-600 cursor-not-allowed' : 'bg-green-600 hover:bg-green-500 text-white shadow-[0_0_15px_rgba(35,134,54,0.5)]'}`}
+                                    >
+                                        ▶ RUN SYSTEM
+                                    </button>
+                                    <button
+                                        onClick={triggerEngineStop}
+                                        disabled={!isEngineRunning}
+                                        className={`px-4 py-2 rounded font-bold text-sm ml-2 transition-all ${!isEngineRunning ? 'bg-gray-800 text-gray-600 cursor-not-allowed' : 'bg-red-600 hover:bg-red-500 text-white shadow-[0_0_15px_rgba(218,54,51,0.5)]'}`}
+                                    >
+                                        ■ HALT
+                                    </button>
+                                </div>
+
+                                <div className="text-right border-l border-gray-700 pl-8">
+                                    <div className="flex items-center justify-end gap-2">
+                                        <div className={`w-3 h-3 rounded-full ${status.includes("LIVE") ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`}></div>
+                                        <span className={`font-bold tracking-wider ${status.includes("LIVE") ? 'text-green-500' : 'text-red-500'}`}>{status}</span>
+                                    </div>
+                                    <p className="text-gray-400 text-sm mt-1">Events Processed: <span className="text-white font-mono">{eventCount.toLocaleString()}</span></p>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Bottom Row: Full Width Description */}
+                        <p className="text-gray-400 text-[13px] leading-relaxed font-sans tracking-wide">
+                            A high-performance, multi-threaded pipeline that ingests a relentless firehose of real-time competitor price changes. The engine dynamically hot-swaps optimization strategies and recalculates platform prices in microseconds, ensuring market capture through aggressive undercutting while mathematically protecting baseline profit boundaries.
+                        </p>
+                    </div>
+
+                    { }
+                    <div className="bg-[#0d1117] border border-gray-700 rounded-lg overflow-visible shadow-2xl pb-4">
+                        <table className="w-full text-left border-collapse">
+                            <thead>
+                                <tr className="bg-[#161b22] border-b border-gray-700 text-gray-400 text-xs uppercase tracking-widest">
+                                    <th className="p-4 font-semibold text-left whitespace-nowrap">
+                                        Asset SKU
+                                        <InfoTooltip text="The unique string identifier encapsulating the item's operational variables." />
+                                    </th>
+                                    <th className="p-4 font-semibold text-right whitespace-nowrap">
+                                        Wholesale Cost
+                                        <InfoTooltip text="The absolute minimum cost floor. Algorithms are mathematically forbidden from pricing below this threshold." />
+                                    </th>
+                                    <th className="p-4 font-semibold text-right text-gray-300 whitespace-nowrap">
+                                        Competitor Price
+                                        <InfoTooltip text="The latest simulated price drop from the live market data firehose." />
+                                    </th>
+                                    <th className="p-4 font-semibold text-right whitespace-nowrap">
+                                        Algo Execution Price
+                                        <InfoTooltip text="The new optimal platform price calculated in microseconds by the polymorphic strategy engine." />
+                                    </th>
+                                    <th className="p-4 font-semibold text-right text-blue-400 whitespace-nowrap">
+                                        Net Profit Margin
+                                        <InfoTooltip text="The live profit capture (Execution Price minus Wholesale Cost) strictly enforced by the system." />
+                                    </th>
+                                    <th className="p-4 font-semibold text-right text-yellow-400 whitespace-nowrap">
+                                        Customer Savings
+                                        <InfoTooltip text="The delta spread indicating how much the customer saves by purchasing at our execution price versus the competitor." />
+                                    </th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {Object.keys(catalog).length === 0 ? (
+                                    <tr><td colSpan="6" className="p-8 text-center text-gray-500 font-mono">Awaiting Market Data...</td></tr>
+                                ) : (
+                                    Object.entries(catalog).map(([sku, data]) => (
+                                        <Row key={sku} sku={sku} {...data} />
+                                    ))
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            );
+        }
+
+        function Row({ sku, price, oldPrice, compPrice, cost, timestamp }) {
+            const [flashClass, setFlashClass] = useState('');
+            const prevTime = useRef(timestamp);
+
+            useEffect(() => {
+                if (timestamp !== prevTime.current) {
+                    const isPriceDrop = parseFloat(price) < parseFloat(oldPrice);
+                    setFlashClass(isPriceDrop ? 'flash-green' : 'flash-red');
+
+                    const timer = setTimeout(() => setFlashClass(''), 800);
+                    prevTime.current = timestamp;
+                    return () => clearTimeout(timer);
+                }
+            }, [timestamp, price, oldPrice]);
+
+            const numPrice = parseFloat(price);
+            const numOld = parseFloat(oldPrice);
+            const numComp = parseFloat(compPrice);
+            const numCost = parseFloat(cost);
+
+            const profit = (numPrice - numCost).toFixed(2);
+            const savings = (numComp - numPrice).toFixed(2);
+
+            return (
+                <tr className={`border-b border-gray-800 table-row ${flashClass}`}>
+                    <td className="p-4 font-bold text-white tracking-wide">{sku}</td>
+                    <td className="p-4 font-mono text-gray-500 text-right">${numCost.toFixed(2)}</td>
+                    <td className="p-4 font-mono text-gray-300 text-right">${numComp.toFixed(2)}</td>
+                    <td className="p-4 font-mono text-right flex flex-col items-end">
+                        {numOld !== numPrice && (
+                            <span className="text-red-500/70 line-through text-xs mb-1">${numOld.toFixed(2)}</span>
+                        )}
+                        <span className="text-green-400 text-lg font-bold">${numPrice.toFixed(2)}</span>
+                    </td>
+                    <td className="p-4 font-mono text-blue-400 text-right">+${profit}</td>
+                    <td className="p-4 font-mono text-yellow-400 text-right">
+                        {savings >= 0 ? `-$${savings}` : `+$${Math.abs(savings)}`}
+                    </td>
+                </tr>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<QuantumDashboard />);
+    </script>
+</body>
+
+</html>
