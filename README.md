@@ -42,7 +42,7 @@ Before you begin, ensure you have the following installed:
 
 **1. Clone the Repository**
 ```bash
-git clone https://github.com/yourusername/QuantumPrice.git
+git clone https://github.com/jarvisified/QuantumPrice-High-Frequency-Pricing-Engine.git
 cd QuantumPrice
 ```
 
